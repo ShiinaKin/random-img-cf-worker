@@ -10,7 +10,7 @@
   "author": "mashirot",
   "license": "GPL-3.0-only",
   "devDependencies": {
-    "wrangler": "^3.57.0"
+    "wrangler": "^3.57.1"
   },
   "dependencies": {
     "@jSquash/jpeg": "npm:@jsquash/jpeg@^1.4.0",

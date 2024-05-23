@@ -2,22 +2,25 @@ import resize, { initResize } from "@jsquash/resize";
 
 import decodeJpeg, { init as initJpegWasm } from "@jsquash/jpeg/decode";
 import decodePng, { init as initPngWasm } from "@jsquash/png/decode";
-import encodeWebp, { init as initWebpWasm } from "@jsquash/webp/encode";
+import decodeWebp, { init as initWebpDecWasm } from "@jsquash/webp/decode";
+import encodeWebp, { init as initWebpEncWasm } from "@jsquash/webp/encode";
 
 import JPEG_DEC_WASM from "../node_modules/@jsquash/jpeg/codec/dec/mozjpeg_dec.wasm";
 import PNG_DEC_WASM from "../node_modules/@jsquash/png/codec/pkg/squoosh_png_bg.wasm";
+import WEBP_DEC_WASM from "../node_modules/@jsquash/webp/codec/dec/webp_dec.wasm";
 import WEBP_ENC_WASM from "../node_modules/@jsquash/webp/codec/enc/webp_enc_simd.wasm";
 import RESIZE_WASM from "../node_modules/@jsquash/resize/lib/resize/pkg/squoosh_resize_bg.wasm";
 
 const decodeImage = async (buffer, format) => {
   if (format === "jpeg" || format === "jpg") {
-    // @Note, we need to manually initialise the wasm module here from wasm import at top of file
     await initJpegWasm(JPEG_DEC_WASM);
     return decodeJpeg(buffer);
   } else if (format === "png") {
-    // @Note, we need to manually initialise the wasm module here from wasm import at top of file
     await initPngWasm(PNG_DEC_WASM);
     return decodePng(buffer);
+  } else if (format === "webp") {
+    await initWebpDecWasm(WEBP_DEC_WASM);
+    return decodeWebp(buffer);
   }
 
   throw new Error(`Unsupported format: ${format}`);
@@ -71,7 +74,7 @@ async function handleRequest(request, env, ctx) {
     if (cacheResult) {
       webpImage = cacheResult;
     } else {
-      const supportedExtensions = ["jpg", "jpeg", "png"];
+      const supportedExtensions = ["jpg", "jpeg", "png", "webp"];
       if (!supportedExtensions.includes(imageType)) {
         return new Response("Unsupported image type", { status: 400 });
       }
@@ -82,24 +85,39 @@ async function handleRequest(request, env, ctx) {
         return new Response("Image not found", { status: 404 });
       }
 
+      if (imageType === "webp" && !th) {
+        webpImage = imageBuffer;
+        await env.imagesCache.put(cacheKey, webpImage, {
+          expirationTtl: cacheExpire,
+        });
+        return new Response(webpImage, {
+          headers: { "Content-Type": "image/webp" },
+        });
+      }
+
       let imageData = await decodeImage(imageBuffer, imageType);
 
       if (th) {
         const originalWidth = imageData.width;
         const originalHeight = imageData.height;
 
-        const newHeight = (originalHeight * th) / originalWidth;
+        if (th != originalWidth) {
+          const newHeight = (originalHeight * th) / originalWidth;
 
-        // @Note, we need to manually initialise the wasm module here from wasm import at top of file
-        await initResize(RESIZE_WASM);
-        imageData = await resize(imageData, { height: newHeight, width: th });
+          await initResize(RESIZE_WASM);
+          imageData = await resize(imageData, { height: newHeight, width: th });
+        }
       }
 
-      // @Note, we need to manually initialise the wasm module here from wasm import at top of file
-      await initWebpWasm(WEBP_ENC_WASM);
-      webpImage = await encodeWebp(imageData, {
-        quality: qualityValue,
-      });
+      if (imageType !== "webp") {
+        await initWebpEncWasm(WEBP_ENC_WASM);
+        webpImage = await encodeWebp(imageData, {
+          quality: qualityValue,
+        });
+      } else {
+        await initWebpEncWasm(WEBP_ENC_WASM);
+        webpImage = await encodeWebp(imageData);
+      }
 
       await env.imagesCache.put(cacheKey, webpImage, {
         expirationTtl: cacheExpire,
